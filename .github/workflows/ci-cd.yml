@@ -1,0 +1,64 @@
+name: CI/CD - Train, Test & Deploy to Back4App Containers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ---------------------------------------------------------------------
+  # JOB 1: CI - dependencies install, model train, tests run
+  # ---------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Train model & log to MLflow
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: python train.py
+
+      - name: Run test cases
+        run: pytest -v
+
+  # ---------------------------------------------------------------------
+  # JOB 2: CD - sirf tab chalega jab "test" job pass ho aur branch main ho.
+  #
+  # Back4app Containers khud GitHub repo ko watch kar ke deploy karta hai
+  # (apna GitHub App install karna padta hai), koi manual "deploy hook"
+  # nahi hota. Isliye hum "production" branch ko sirf tab update karte hain
+  # jab tests pass hon - Back4app usi branch ko watch karega, matlab
+  # untested code kabhi deploy nahi hoga (proper CI-gated CD).
+  # ---------------------------------------------------------------------
+  promote-to-production:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push tested code to production branch
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions"
+          git push origin HEAD:production --force
